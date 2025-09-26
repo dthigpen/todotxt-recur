@@ -1,0 +1,33 @@
+{
+  "name": "todotxt-recur",
+  "version": "0.1.0",
+  "description": "An extention of the todo.txt format for handling recurring tasks.",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "node src/test.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dthigpen/todotxt-recur.git"
+  },
+  "keywords": [
+    "todo.txt",
+    "todotxt",
+    "todo",
+    "task",
+    "recur",
+    "recurrence",
+    "recurring",
+    "repeat"
+  ],
+  "author": "David Thigpen",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/dthigpen/todotxt-recur/issues"
+  },
+  "homepage": "https://github.com/dthigpen/todotxt-recur#readme",
+  "dependencies": {
+    "todotxt-utils": "^0.1.0"
+  }
+}
