@@ -5,7 +5,7 @@
   "type": "module",
   "main": "src/index.js",
   "scripts": {
-    "test": "node src/test.js"
+    "test": "uvu tests"
   },
   "repository": {
     "type": "git",
@@ -28,6 +28,10 @@
   },
   "homepage": "https://github.com/dthigpen/todotxt-recur#readme",
   "dependencies": {
-    "todotxt-utils": "^0.1.0"
+    "date-fns": "^4.1.0",
+    "todotxt-utils": "^0.1.1"
+  },
+  "devDependencies": {
+    "uvu": "^0.5.6"
   }
 }

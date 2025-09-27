@@ -4,11 +4,16 @@ import {
   getProjects,
   setPriority,
   getKeyValues,
-  getValue,
   getCompletionDate,
   getCreationDate,
+  replaceSpan,
 } from "todotxt-utils";
 
+import { parseISO, addDays, addWeeks, addMonths, addYears } from "date-fns";
+
+function getValue(task, key) {
+	return getKeyValues(task).find(s => s.key === key) ?? null;
+}
 /**
  * Normalizes tasks with rid:new or empty rid and assigns unique incrementing IDs.
  * @param {string[]} tasks - Array of todo.txt task strings.
@@ -20,22 +25,20 @@ export function normalizeRids(tasks) {
 
   // Step 1: find the max existing numeric rid
   for (const task of tasks) {
-    const rid = getValue(task, "rid");
-    if (rid && ridRegex.test(rid)) {
-      maxId = Math.max(maxId, parseInt(rid, 10));
+  	const ridSpan = getValue(task, 'rid')
+    if (ridSpan && ridRegex.test(ridSpan.value)) {
+      maxId = Math.max(maxId, parseInt(ridSpan.value, 10));
     }
   }
 
   // Step 2: assign new IDs to rid:new or empty rid
   let nextId = maxId + 1;
   return tasks.map(task => {
-    const rid = getValue(task, "rid");
-
-    if (rid === "new") {
+   	const ridSpan = getValue(task, 'rid')
+    if (ridSpan?.value === "new") {
       const assigned = nextId++;
       return task.replace(/rid:new/, `rid:${assigned}`);
     }
-
     if (/rid:($|\s)/.test(task)) {
       const assigned = nextId++;
       return task.replace(/rid:($|\s)/, `rid:${assigned}$1`);
@@ -52,98 +55,111 @@ function dateToString(date) {
   const dd = String(date.getDate()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd}`;
 }
+
 /**
- * Generates the next instance of a recurring task if eligible.
- * Rules:
- * - Only generates if previous instance is completed.
- * - Skips tasks with no due date.
- * @param {string} task - The todo.txt task string.
- * @param {Date} today - The current date for reference.
- * @returns {string|null} New task string or null if no new instance is generated.
+ * Adjust a date forward according to a recurrence rule like '3d', '+1m', '2b'.
+ * @param {Date|null} date - Original date.
+ * @param {string} adjust - Recurrence string.
+ * @returns {Date|null} Adjusted date, or null if input is null.
+ */
+export function adjustDate(date, adjust) {
+  if (!date) return null;
+
+  const m = adjust.match(/^(\+?)(\d+)([dbwmy]?)$/);
+  if (!m) throw new Error("Malformed `rec:` value");
+
+  const [, , numStr, unit = "d"] = m;
+  const num = parseInt(numStr, 10);
+
+  switch (unit) {
+    case "":
+    case "d":
+      return addDays(date, num);
+    case "b": {
+      // Business days (Mon–Fri)
+      let d = new Date(date);
+      let count = num;
+      while (count > 0) {
+        d = addDays(d, 1);
+        const weekday = d.getDay();
+        if (weekday >= 1 && weekday <= 5) count--;
+      }
+      return d;
+    }
+    case "w":
+      return addWeeks(date, num);
+    case "m": {
+      // Month add with clamp
+      const d = addMonths(date, num);
+      const endOfMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+      if (d.getDate() > endOfMonth) d.setDate(endOfMonth);
+      return d;
+    }
+    case "y":
+      return addYears(date, num);
+    default:
+      throw new Error("Unknown recurrence unit");
+  }
+}
+
+/**
+ * Generate a new recurring task line according to rec: rules.
+ * @param {string} task - The todo.txt line.
+ * @param {Date} [today=new Date()] - Current date.
+ * @returns {string|null} New task line, or null if no recurrence.
  */
 export function generateNextRecurring(task, today = new Date()) {
-  const kv = getKeyValues(task);
-  const rec = kv["rec"];
-  const dueStr = kv["due"];
+  const recSpan = getValue(task, "rec");
+  if (!recSpan) return null;
 
-  if (!rec || !dueStr) return null; // skip if no recurrence or no due date
-  if (!isCompleted(task)) return null; // skip if previous instance is incomplete
+  const tSpan = getValue(task, "t");
+  const dueSpan = getValue(task, "due");
 
-  const dueDate = new Date(dueStr);
-  let nextDate = new Date(dueDate);
+  const tDate = tSpan ? parseISO(tSpan.value) : null;
+  const dueDate = dueSpan ? parseISO(dueSpan.value) : null;
+  const strict = recSpan.value.startsWith("+");
 
-  // Simple recurrence rules: daily, weekly, monthly
-  if (rec.endsWith("d")) {
-    const n = parseInt(rec) || 1;
-    nextDate.setDate(nextDate.getDate() + n);
-  } else if (rec.endsWith("w")) {
-    const n = parseInt(rec) || 1;
-    nextDate.setDate(nextDate.getDate() + 7 * n);
-  } else if (rec.endsWith("m")) {
-    const n = parseInt(rec) || 1;
-    nextDate.setMonth(nextDate.getMonth() + n);
+  // TODO Use todotxt-utils for this
+  // Remove completion and creation date if any (x 2025-09-01 ...)
+  task = task.replace(/^(x\s+\d{4}-\d{2}-\d{2}\s+)?(\([A-Z]\)\s+)?\d{4}-\d{2}-\d{2}\s+/, "$2");
+
+  let newT = new Date(tDate);
+  let newDue = dueDate ? new Date(dueDate) : null;
+
+  if (!tDate && !dueDate) {
+    // No dates, recurrence not date-based
+    return task;
+  }
+
+  if (tDate && dueDate) {
+    if (strict) {
+      newT = adjustDate(tDate, recSpan.value);
+      newDue = adjustDate(dueDate, recSpan.value);
+    } else {
+      const offset = (dueDate - tDate) / (1000 * 60 * 60 * 24);
+      newT = adjustDate(today, recSpan.value);
+      newDue = addDays(newT, offset);
+    }
+  } else if (strict) {
+    if (tDate) newT = adjustDate(tDate, recSpan.value);
+    if (dueDate) newDue = adjustDate(dueDate, recSpan.value);
   } else {
-    return null; // unknown recurrence format
+    if (tDate) newT = adjustDate(today, recSpan.value);
+    if (dueDate) newDue = adjustDate(today, recSpan.value);
   }
 
-  // roll forward until nextDate >= today
-  while (nextDate < today) {
-    if (rec.endsWith("d")) nextDate.setDate(nextDate.getDate() + parseInt(rec));
-    if (rec.endsWith("w")) nextDate.setDate(nextDate.getDate() + 7 * parseInt(rec));
-    if (rec.endsWith("m")) nextDate.setMonth(nextDate.getMonth() + parseInt(rec));
+  // Replace spans using your utils
+  if (tDate) {
+    task = replaceSpan(task, tSpan, newT.toISOString().slice(0, 10));
+  } else if (newT) {
+    // No span, append
+    task += ` t:${newT.toISOString().slice(0, 10)}`;
+  }
+  if (dueDate) {
+    task = replaceSpan(task, dueSpan, newDue.toISOString().slice(0, 10));
+  } else if (newDue) {
+    task += ` due:${newDue.toISOString().slice(0, 10)}`;
   }
 
-  // Format date as yyyy-mm-dd
-  const newDue = dateToString(nextDate);
-
-  // Replace due date and remove completion marker
-  const completionDate = getCompletionDate(task);
-  const creationDate = getCreationDate(task);
-
-  let newTask = task.replace(/^x\s+/, "");
- 	// remove completion data
-  if(completionDate) {
-  	newTask = newTask.slice(10)
-  }
-	// remove creation date so new one can be added
-  if(creationDate) {
-  	newTask = dateToString(today) + ' ' + newTask.slice(10)
-  	
-  }
-  newTask = newTask.replace(/due:\S+/, `due:${newDue}`);
-
-  return newTask;
-}
-
-/**
- * Generates new instances for an array of recurring tasks.
- * @param {string[]} tasks - Array of todo.txt task strings.
- * @param {Date} today - Reference date.
- * @returns {string[]} Array of new task instances.
- */
-export function generateNextRecurringBatch(tasks, today = new Date()) {
-  const newTasks = [];
-  for (const task of tasks) {
-    const next = generateNextRecurring(task, today);
-    if (next) newTasks.push(next);
-  }
-  return newTasks;
-}
-
-
-/**
- * Top-level function to normalize IDs and generate next recurring tasks.
- * @param {string[]} tasks - Array of todo.txt task strings.
- * @param {Date} today - Reference date.
- * @returns {string[]} Updated array including new recurring instances.
- */
-export function updateRecurrences(tasks, today = new Date()) {
-  // Step 1: Normalize IDs
-  const normalized = normalizeRids(tasks);
-
-  // Step 2: Generate next recurring instances
-  const nextRecurring = generateNextRecurringBatch(normalized, today);
-
-  // Step 3: Return the combined list
-  return [...normalized, ...nextRecurring];
+  return task;
 }
