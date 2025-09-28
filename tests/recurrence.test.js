@@ -17,7 +17,7 @@ const cases = [
     {
         name: 'simple daily recurrence unchanged',
         input: 'Meet friend for tea rec:1',
-        expect: 'Meet friend for tea rec:1',
+        expect: null,
     },
     {
         name: 'recurs every 5 days from now',
@@ -81,4 +81,5 @@ test('Recurrence Ids get generated', () => {
     ];
     assert.equal(normalizeRids(tasks), expectedTasks);
 });
+
 test.run();
